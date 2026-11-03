@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+"""Stand-in for `sinfo`: the partitions slurmer offers in its filter menu."""
+print("test")
+print("testf")

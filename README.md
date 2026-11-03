@@ -83,6 +83,8 @@ More detailed keybindings can be found each popup menu.
 
 Contributions are welcome! Feel free to submit issues or pull requests.
 
+The job history screenshots are generated from demo data with [VHS](https://github.com/charmbracelet/vhs), so no Slurm cluster is needed to update them: run `cargo build --release` and then `vhs scripts/screenshots/history.tape`. VHS and Python 3 are only needed for this, not for building or running slurmer.
+
 ## 📜 License
 
 Copyright (c) wjwei-handsome <weiwenjie@westlake.edu.cn>

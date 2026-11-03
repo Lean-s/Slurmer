@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Stand-in for `sacct` that prints fixed demo job history, for the README
+screenshots.
+
+Like the real tool it prints one allocation line per job followed by that
+job's `.batch` and `.extern` steps, and only the step lines carry MaxRSS.
+Whichever fields `--format` asks for are answered by name.
+"""
+import sys
+from datetime import datetime, timedelta
+
+USER = "weiwenjie"
+
+# id, name, state, CPUs, elapsed seconds, share of the reserved CPU time
+# used, memory requested (MB), peak RSS (MB), time limit seconds, node,
+# end time. Running jobs have no usage figures yet, as on a real cluster.
+JOBS = [
+    ("6646996", "test1", "COMPLETED", 4, 3912, 0.92, 10000, 8806, 7200, "amd-ep4-064", "2026-10-28T09:41:12"),
+    ("6646997", "test_1", "COMPLETED", 1, 2530, 0.97, 2500, 2150, 3600, "amd-ep4-064", "2026-10-28T10:02:30"),
+    ("6646998", "test_2", "COMPLETED", 8, 2324, 0.12, 20000, 1229, 14400, "amd-ep4-065", "2026-10-29T14:18:44"),
+    ("6646999", "test_3", "OUT_OF_MEMORY", 2, 331, 0.64, 5000, 5100, 3600, "amd-ep4-065", "2026-10-30T08:05:31"),
+    ("6647000", "test_4", "TIMEOUT", 1, 3600, 0.99, 2500, 1434, 3600, "amd-ep4-066", "2026-10-31T16:00:00"),
+    ("6647001", "test_5", "FAILED", 4, 12, 0.08, 10000, 310, 7200, "amd-ep4-066", "2026-11-01T11:00:12"),
+    ("6647002", "test_6", "CANCELLED by 1000", 16, 1200, 0.45, 40000, 18432, 28800, "amd-ep4-067", "2026-11-01T13:20:00"),
+    ("6647003", "test_7", "COMPLETED", 32, 7800, 0.03, 80000, 2253, 43200, "amd-ep4-068", "2026-11-02T10:10:00"),
+    ("6647004", "test_8", "COMPLETED", 2, 900, 0.81, 5000, 3994, 1800, "amd-ep4-064", "2026-11-02T15:15:00"),
+    ("6647005", "test_9", "RUNNING", 4, 720, None, 10000, None, 7200, "amd-ep4-069", None),
+    ("6647006", "test_10", "RUNNING", 1, 180, None, 2500, None, 3600, "amd-ep4-069", None),
+    ("6647010", "test_14", "COMPLETED", 1, 300, 0.95, 2500, 900, 3600, "amd-ep4-070", "2026-11-03T09:05:00"),
+    ("6647011", "test_15", "COMPLETED", 4, 1500, 0.71, 10000, 7300, 3600, "amd-ep4-070", "2026-11-03T09:30:00"),
+    ("6647012", "test_16", "FAILED", 2, 45, 0.30, 5000, 410, 3600, "amd-ep4-071", "2026-11-03T09:41:00"),
+    ("6647013", "test_17", "COMPLETED", 8, 2700, 0.52, 20000, 15100, 7200, "amd-ep4-071", "2026-11-03T10:15:00"),
+    ("6647014", "test_18", "COMPLETED", 1, 1260, 0.98, 2500, 2380, 1800, "amd-ep4-064", "2026-11-03T10:21:00"),
+    ("6647015", "test_19", "COMPLETED", 16, 3300, 0.21, 40000, 9900, 7200, "amd-ep4-072", "2026-11-03T10:40:00"),
+    ("6647016", "test_20", "TIMEOUT", 2, 1800, 0.88, 5000, 4100, 1800, "amd-ep4-072", "2026-11-03T10:52:00"),
+]
+
+EXIT_CODES = {"FAILED": "1:0", "OUT_OF_MEMORY": "0:125", "CANCELLED": "0:15"}
+NOW = datetime(2026, 11, 3, 11, 0, 0)
+
+
+def duration(seconds):
+    days, rest = divmod(int(round(seconds)), 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    clock = f"{hours:02}:{minutes:02}:{secs:02}"
+    return f"{days}-{clock}" if days else clock
+
+
+def requested_fields(args):
+    for i, arg in enumerate(args):
+        if arg == "--format":
+            return args[i + 1].split(",")
+        if arg.startswith("--format="):
+            return arg.split("=", 1)[1].split(",")
+    return ["JobID", "JobName", "State"]
+
+
+def lines():
+    for job_id, name, state, cpus, elapsed, cpu_share, req_mb, rss_mb, limit, node, end in JOBS:
+        running = cpu_share is None
+        end_time = NOW if running else datetime.fromisoformat(end)
+        start = (end_time - timedelta(seconds=elapsed)).isoformat()
+        total_cpu = "00:00:00" if running else duration(cpus * elapsed * cpu_share)
+        shared = {
+            "State": state,
+            "ExitCode": EXIT_CODES.get(state.split()[0], "0:0"),
+            "Elapsed": duration(elapsed),
+            "ElapsedRaw": str(elapsed),
+            "Start": start,
+            "End": "Unknown" if running else end,
+            "AllocCPUS": str(cpus),
+            "CPUTimeRAW": str(cpus * elapsed),
+            "NNodes": "1",
+            "NodeList": node,
+        }
+        yield {
+            **shared,
+            "JobID": job_id,
+            "JobName": name,
+            "User": USER,
+            "Partition": "test",
+            "QOS": "normal",
+            "TotalCPU": total_cpu,
+            "ReqMem": f"{req_mb}M",
+            "Timelimit": duration(limit),
+        }
+        yield {
+            **shared,
+            "JobID": f"{job_id}.batch",
+            "JobName": "batch",
+            "TotalCPU": total_cpu,
+            "MaxRSS": "" if running else f"{rss_mb * 1024}K",
+        }
+        yield {
+            **shared,
+            "JobID": f"{job_id}.extern",
+            "JobName": "extern",
+            "TotalCPU": "00:00:00",
+            "MaxRSS": "" if running else "1024K",
+        }
+
+
+fields = requested_fields(sys.argv[1:])
+for line in lines():
+    print("|".join(line.get(field, "") for field in fields))

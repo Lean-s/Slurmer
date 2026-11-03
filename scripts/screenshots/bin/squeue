@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Stand-in for `squeue` that prints fixed demo jobs, for the README screenshots.
+
+slurmer asks for a `|`-separated `--format`; each code is answered from the
+table below, and anything else prints as N/A like the real tool.
+"""
+import sys
+
+USER = "weiwenjie"
+
+# Columns keyed by the squeue format codes slurmer uses
+JOBS = [
+    {"%i": "6647005", "%j": "test_9", "%T": "RUNNING", "%M": "12:00", "%N": "amd-ep4-069", "%C": "4", "%m": "10000M", "%P": "test"},
+    {"%i": "6647006", "%j": "test_10", "%T": "RUNNING", "%M": "3:00", "%N": "amd-ep4-069", "%C": "1", "%m": "2500M", "%P": "test"},
+    {"%i": "6647007", "%j": "test_11", "%T": "PENDING", "%M": "0:00", "%N": "", "%C": "1", "%m": "2500M", "%P": "test,testf"},
+    {"%i": "6647008", "%j": "test_12", "%T": "PENDING", "%M": "0:00", "%N": "", "%C": "1", "%m": "2500M", "%P": "test,testf"},
+    {"%i": "6647009", "%j": "test_13", "%T": "PENDING", "%M": "0:00", "%N": "", "%C": "1", "%m": "2500M", "%P": "test,testf"},
+]
+
+args = sys.argv[1:]
+fmt = args[args.index("--format") + 1] if "--format" in args else "%i|%j|%u|%T|%M|%N|%C|%m|%P|%q"
+
+for job in JOBS:
+    fields = {"%u": USER, "%q": "normal", "%D": "1", **job}
+    print("|".join(fields.get(code, "N/A") for code in fmt.split("|")))
