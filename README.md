@@ -17,6 +17,7 @@ It provides an intuitive, interactive interface to view, filter, sort, and manag
 - **🎮 Job Management**: Cancel selected jobs
 ![](./images/cancel.png)
 - **📈 Job History & Efficiency**: Review past jobs from the Slurm accounting database and see how much of the CPU, memory and walltime they reserved was actually used, so over-allocated jobs are easy to spot
+![](./images/history.png)<br>![](./images/history-cpu.png)
 
   - **CPU%** — `TotalCPU / (AllocCPUS x Elapsed)`: how much of the reserved CPU time the job burned, the same ratio `seff` reports
   - **Mem%** — peak `MaxRSS` over the memory allocated per node
