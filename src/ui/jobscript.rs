@@ -160,7 +160,7 @@ impl JobScript {
     }
 
     /// Create display text with optional line numbers
-    fn create_display_text(&self) -> Text {
+    fn create_display_text(&self) -> Text<'_> {
         if self.use_bat {
             let lines = parse_ansi_to_spans(&self.content);
             return Text::from(lines);
@@ -262,7 +262,7 @@ fn create_bat_out_string(path: &str) -> Option<String> {
 }
 
 /// Parse ANSI escape sequences into ratatui spans
-fn parse_ansi_to_spans(ansi_text: &str) -> Vec<Line> {
+fn parse_ansi_to_spans(ansi_text: &str) -> Vec<Line<'_>> {
     use regex::Regex;
 
     // Regex to match ANSI color escape sequences
