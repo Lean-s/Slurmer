@@ -308,7 +308,7 @@ impl LogView {
         }
     }
 
-    fn fit_text(s: &str, lines: usize, cols: usize, offset: usize, _wrap: bool) -> Text {
+    fn fit_text(s: &str, lines: usize, cols: usize, offset: usize, _wrap: bool) -> Text<'_> {
         // Process text by handling carriage returns
         let processed_lines: Vec<String> = s
             .lines()

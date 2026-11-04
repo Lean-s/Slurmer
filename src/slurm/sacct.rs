@@ -5,11 +5,8 @@ use std::str::FromStr;
 
 use super::JobState;
 
-/// Fields requested from `sacct`, in the order they are parsed.
-///
-/// `JobName` is last on purpose: it is the only field a user can put a `|`
-/// into, and keeping it at the end means a stray separator cannot shift the
-/// columns we care about.
+/// Fields requested from `sacct`, in the order they are parsed. Any extra
+/// fields the user asked for follow them.
 const SACCT_FIELDS: &[&str] = &[
     "JobID",
     "User",
@@ -31,6 +28,61 @@ const SACCT_FIELDS: &[&str] = &[
     "Timelimit",
     "JobName",
 ];
+
+/// Separates the fields of `sacct --parsable2` output.
+///
+/// Job names and comments are free text, so the default `|` can show up
+/// inside them and shift every column after it; the ASCII unit separator
+/// does not.
+const DELIMITER: &str = "\x1f";
+
+/// Environment variable listing extra `sacct` fields to show as history
+/// columns, e.g. `Comment%70,Account`.
+pub const EXTRA_FIELDS_ENV: &str = "SLURMER_HISTORY_FIELDS";
+
+/// An extra `sacct` field shown as its own column in the history view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtraField {
+    /// Field name as `sacct --format` knows it, e.g. `Comment`
+    pub name: String,
+    /// Column width in the table
+    pub width: u16,
+}
+
+impl ExtraField {
+    const DEFAULT_WIDTH: u16 = 20;
+
+    /// Parse a comma separated list in the `Field%width` form that
+    /// `sacct --format` takes, e.g. `Comment%70,Account`.
+    pub fn parse_list(spec: &str) -> Vec<ExtraField> {
+        spec.split(',')
+            .filter_map(|entry| {
+                let (name, width) = match entry.split_once('%') {
+                    // tolerate squeue's `%.70` justification dot
+                    Some((name, width)) => (
+                        name.trim(),
+                        width.trim().trim_start_matches('.').parse::<u16>().ok(),
+                    ),
+                    None => (entry.trim(), None),
+                };
+                if name.is_empty() {
+                    return None;
+                }
+                Some(ExtraField {
+                    name: name.to_string(),
+                    width: width.filter(|w| *w > 0).unwrap_or(Self::DEFAULT_WIDTH),
+                })
+            })
+            .collect()
+    }
+
+    /// Extra fields from `SLURMER_HISTORY_FIELDS`, none when it is unset
+    pub fn from_env() -> Vec<ExtraField> {
+        std::env::var(EXTRA_FIELDS_ENV)
+            .map(|spec| Self::parse_list(&spec))
+            .unwrap_or_default()
+    }
+}
 
 /// How far back the history view looks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -99,17 +151,28 @@ pub struct SacctOptions {
     pub states: Vec<JobState>,
     pub partitions: Vec<String>,
     pub window: HistoryWindow,
+    /// Fields fetched on top of `SACCT_FIELDS`
+    pub extra_fields: Vec<ExtraField>,
 }
 
 impl SacctOptions {
     pub fn to_args(&self) -> Vec<String> {
+        let format = SACCT_FIELDS
+            .iter()
+            .copied()
+            .chain(self.extra_fields.iter().map(|f| f.name.as_str()))
+            .collect::<Vec<_>>()
+            .join(",");
+
         let mut args = vec![
             "--starttime".to_string(),
             self.window.start_time().to_string(),
             "--parsable2".to_string(),
+            "--delimiter".to_string(),
+            DELIMITER.to_string(),
             "--noheader".to_string(),
             "--format".to_string(),
-            SACCT_FIELDS.join(","),
+            format,
         ];
 
         match self.user.as_deref() {
@@ -168,6 +231,8 @@ pub struct HistoryJob {
     pub req_mem_bytes: Option<u64>,
     /// Peak resident set size across all steps, in bytes
     pub max_rss_bytes: Option<u64>,
+    /// Values of the extra fields, in the order they were requested
+    pub extra: Vec<String>,
 }
 
 impl HistoryJob {
@@ -249,7 +314,10 @@ pub async fn run_sacct(options: &SacctOptions) -> Result<Vec<HistoryJob>> {
         }));
     }
 
-    Ok(parse_sacct_output(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_sacct_output(
+        &String::from_utf8_lossy(&output.stdout),
+        &options.extra_fields,
+    ))
 }
 
 /// Parse `sacct --parsable2 --noheader` output.
@@ -257,16 +325,17 @@ pub async fn run_sacct(options: &SacctOptions) -> Result<Vec<HistoryJob>> {
 /// `sacct` prints one line per allocation followed by one line per step.
 /// Only the step lines carry `MaxRSS`, so they are folded into the
 /// allocation they belong to and otherwise dropped.
-pub fn parse_sacct_output(stdout: &str) -> Vec<HistoryJob> {
+pub fn parse_sacct_output(stdout: &str, extra_fields: &[ExtraField]) -> Vec<HistoryJob> {
     let mut jobs: Vec<HistoryJob> = Vec::new();
+    let field_count = SACCT_FIELDS.len() + extra_fields.len();
 
     for line in stdout.lines() {
         if line.trim().is_empty() {
             continue;
         }
 
-        let parts: Vec<&str> = line.splitn(SACCT_FIELDS.len(), '|').collect();
-        if parts.len() < SACCT_FIELDS.len() {
+        let parts: Vec<&str> = line.splitn(field_count, DELIMITER).collect();
+        if parts.len() < field_count {
             continue;
         }
 
@@ -313,6 +382,10 @@ pub fn parse_sacct_output(stdout: &str) -> Vec<HistoryJob> {
             node_list: parts[16].trim().to_string(),
             time_limit: parts[17].trim().to_string(),
             name: parts[18].trim().to_string(),
+            extra: parts[SACCT_FIELDS.len()..]
+                .iter()
+                .map(|value| value.trim().to_string())
+                .collect(),
         });
     }
 
@@ -418,6 +491,12 @@ pub fn format_size(bytes: u64) -> String {
 mod tests {
     use super::*;
 
+    /// Fixtures are written with `|` for readability; `sacct` is asked to
+    /// separate fields with `DELIMITER` instead.
+    fn parse(output: &str) -> Vec<HistoryJob> {
+        parse_sacct_output(&output.replace('|', DELIMITER), &[])
+    }
+
     #[test]
     fn parses_durations() {
         assert_eq!(parse_duration("00:00:30"), Some(30.0));
@@ -460,7 +539,7 @@ mod tests {
 12345.extern|alice|gpu|normal|COMPLETED|0:0|00:10:00|600|2024-01-01T10:00:00|2024-01-01T10:10:00|4|2400|00:00:00||1024K|1|node01||extern
 ";
 
-        let jobs = parse_sacct_output(output);
+        let jobs = parse(output);
         assert_eq!(jobs.len(), 1);
 
         let job = &jobs[0];
@@ -479,19 +558,63 @@ mod tests {
 
     #[test]
     fn keeps_a_pipe_in_a_job_name() {
-        let output = "99|bob|cpu|normal|FAILED|1:0|00:00:05|5|2024-01-01T10:00:00|2024-01-01T10:00:05|1|5|00:00:01|1G||1|node02|00:10:00|a|b\n";
+        let fields = "99|bob|cpu|normal|FAILED|1:0|00:00:05|5|2024-01-01T10:00:00|2024-01-01T10:00:05|1|5|00:00:01|1G||1|node02|00:10:00";
+        let output = format!("{}{}a|b\n", fields.replace('|', DELIMITER), DELIMITER);
 
-        let jobs = parse_sacct_output(output);
+        let jobs = parse_sacct_output(&output, &[]);
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "a|b");
         assert_eq!(jobs[0].state, JobState::Failed);
+    }
+
+    /// Extra fields come after the built-in ones, and a free-text comment
+    /// may hold the old `|` separator without disturbing anything.
+    #[test]
+    fn reads_extra_fields_after_the_built_in_ones() {
+        let extra = ExtraField::parse_list("Comment%70,Account");
+        let allocation = "5|alice|cpu|normal|COMPLETED|0:0|00:01:00|60|2024-01-01T10:00:00|2024-01-01T10:01:00|1|60|00:01:00|1G||1|node01|00:10:00|align";
+        let step = "5.batch|alice|cpu|normal|COMPLETED|0:0|00:01:00|60|2024-01-01T10:00:00|2024-01-01T10:01:00|1|60|00:01:00||512M|1|node01||batch||";
+        let output = format!(
+            "{}{d}sample A | lane 2{d}lab\n{}\n",
+            allocation.replace('|', DELIMITER),
+            step.replace('|', DELIMITER),
+            d = DELIMITER
+        );
+
+        let jobs = parse_sacct_output(&output, &extra);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name, "align");
+        assert_eq!(jobs[0].extra, ["sample A | lane 2", "lab"]);
+        assert_eq!(jobs[0].max_rss_bytes, Some(512 * 1024 * 1024));
+    }
+
+    #[test]
+    fn parses_extra_field_specs() {
+        assert_eq!(
+            ExtraField::parse_list(" Comment%70 , Account,,WorkDir%.40 "),
+            [
+                ExtraField {
+                    name: "Comment".to_string(),
+                    width: 70
+                },
+                ExtraField {
+                    name: "Account".to_string(),
+                    width: ExtraField::DEFAULT_WIDTH
+                },
+                ExtraField {
+                    name: "WorkDir".to_string(),
+                    width: 40
+                },
+            ]
+        );
+        assert!(ExtraField::parse_list("").is_empty());
     }
 
     #[test]
     fn reads_a_cancellation_reason_as_cancelled() {
         let output = "7|bob|cpu|normal|CANCELLED by 1000|0:0|00:00:05|5|Unknown|2024-01-01T10:00:05|1|5|00:00:00|1G||1|node02|00:10:00|sleep\n";
 
-        let jobs = parse_sacct_output(output);
+        let jobs = parse(output);
         assert_eq!(jobs[0].state, JobState::Cancelled);
     }
 
@@ -500,7 +623,7 @@ mod tests {
         // a pending job has no elapsed time, so there is nothing to divide by
         let output = "8|bob|cpu|normal|PENDING|0:0|00:00:00|0|Unknown|Unknown|1|0|00:00:00|1G||1||00:10:00|queued\n";
 
-        let jobs = parse_sacct_output(output);
+        let jobs = parse(output);
         assert_eq!(jobs[0].cpu_efficiency(), None);
         assert_eq!(jobs[0].memory_efficiency(), None);
     }
@@ -511,7 +634,7 @@ mod tests {
     fn leaves_running_jobs_unscored() {
         let output = "9|bob|cpu|normal|RUNNING|0:0|00:30:00|1800|2024-01-01T10:00:00|Unknown|8|14400|00:00:00|16G||1|node03|02:00:00|still_going\n";
 
-        let jobs = parse_sacct_output(output);
+        let jobs = parse(output);
         assert_eq!(jobs[0].state, JobState::Running);
         assert_eq!(jobs[0].cpu_efficiency(), None);
         assert_eq!(jobs[0].memory_efficiency(), None);
@@ -525,8 +648,14 @@ mod tests {
             states: vec![JobState::Completed],
             partitions: vec!["gpu".to_string()],
             window: HistoryWindow::Week,
+            extra_fields: ExtraField::parse_list("Comment%70"),
         };
         let args = options.to_args();
+
+        let format = &args[args.iter().position(|a| a == "--format").unwrap() + 1];
+        assert!(format.starts_with("JobID,"));
+        assert!(format.ends_with(",JobName,Comment"));
+        assert!(args.windows(2).any(|w| w == ["--delimiter", DELIMITER]));
 
         assert!(args.windows(2).any(|w| w == ["--starttime", "now-7days"]));
         assert!(args.windows(2).any(|w| w == ["--user", "alice"]));

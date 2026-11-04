@@ -27,6 +27,8 @@ It provides an intuitive, interactive interface to view, filter, sort, and manag
 
   The history view reuses whatever is set in the filter menu (user, state, partition, QoS, job name and node regexes), and <kbd>←</kbd>/<kbd>→</kbd> moves the time window between 24h, 3d, 7d, 30d and 90d.
 
+  Extra `sacct` fields, such as the job comment, can be added as columns with `SLURMER_HISTORY_FIELDS` (see [Configuration](#️-configuration)).
+
 
 <!-- | 🔄 **Real-time Job Monitoring** | 🔍 **Advanced Filtering** | 📊 **Customizable Columns** |
 |----------------------------------|---------------------------|------------------------------|
@@ -78,6 +80,14 @@ More detailed keybindings can be found each popup menu.
 ## ⚙️ Configuration
 
 `slurmer` automatically detects available SLURM partitions and QoS in your system and uses the currently logged-in username as the default filter.
+
+To show more `sacct` fields in the job history view, list them in `SLURMER_HISTORY_FIELDS`, using the same `Field%width` form as `sacct --format`. They are added as columns after the built-in ones and are off unless set. For example, to always see job comments, add this to your `~/.bashrc`:
+
+```bash
+export SLURMER_HISTORY_FIELDS="Comment%70"
+```
+
+Several fields are separated by commas, e.g. `Comment%70,Account,WorkDir%40`, and a field without a width gets 20 columns. `sacct --helpformat` lists every field. Slurm only stores job comments in the accounting database when `AccountingStoreFlags=job_comment` is set in `slurm.conf`, so the `Comment` column stays empty on clusters without it.
 
 ## 👥 Contributing
 

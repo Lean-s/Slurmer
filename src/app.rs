@@ -14,7 +14,7 @@ use tokio::runtime::Runtime;
 use crate::{
     slurm::{
         command::{execute_scancel, get_partitions, get_qos},
-        sacct::{run_sacct, HistoryJob, SacctOptions},
+        sacct::{run_sacct, ExtraField, HistoryJob, SacctOptions},
         squeue::{run_squeue, SqueueOptions},
         JobState,
     },
@@ -115,7 +115,10 @@ impl App {
             filter_popup: FilterPopup::new(),
             columns_popup: ColumnsPopup::new(selected_columns.clone(), sort_columns.clone()),
             log_view: LogView::new(),
-            history_view: HistoryView::new(),
+            history_view: HistoryView {
+                extra_fields: ExtraField::from_env(),
+                ..HistoryView::new()
+            },
             script_view: JobScript::new(),
             status_message: String::new(),
             status_timeout: None,
@@ -261,6 +264,7 @@ impl App {
             states: self.squeue_options.states.clone(),
             partitions: self.squeue_options.partitions.clone(),
             window: self.history_view.window,
+            extra_fields: self.history_view.extra_fields.clone(),
         };
 
         match self.runtime.block_on(async { run_sacct(&options).await }) {

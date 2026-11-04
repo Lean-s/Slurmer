@@ -8,7 +8,7 @@ use ratatui::{
 };
 use std::cmp::Ordering;
 
-use crate::slurm::sacct::{HistoryJob, HistoryWindow};
+use crate::slurm::sacct::{ExtraField, HistoryJob, HistoryWindow};
 use crate::ui::jobslist::state_color;
 
 /// What the history view wants the app to do after a key press
@@ -71,6 +71,8 @@ pub struct HistoryView {
     pub descending: bool,
     /// Why the last `sacct` call failed, if it did
     pub error: Option<String>,
+    /// Extra `sacct` fields shown after the built-in columns
+    pub extra_fields: Vec<ExtraField>,
 }
 
 impl Default for HistoryView {
@@ -83,6 +85,7 @@ impl Default for HistoryView {
             sort: HistorySort::EndTime,
             descending: true,
             error: None,
+            extra_fields: Vec::new(),
         }
     }
 }
@@ -228,9 +231,10 @@ impl HistoryView {
             return;
         }
 
-        let headers = [
+        let mut headers = vec![
             "ID", "Name", "State", "Elapsed", "CPU", "CPU%", "Req", "Used", "Mem%", "Time%", "End",
         ];
+        headers.extend(self.extra_fields.iter().map(|f| f.name.as_str()));
         let header = Row::new(headers.iter().map(|h| {
             let style = Style::default()
                 .fg(if self.sort.label() == *h {
@@ -249,7 +253,7 @@ impl HistoryView {
             let mem = job.memory_efficiency();
             let time = job.time_efficiency();
 
-            Row::new(vec![
+            let mut cells = vec![
                 Cell::from(job.id.clone()),
                 Cell::from(job.name.clone()),
                 Cell::from(job.state.to_string())
@@ -262,11 +266,16 @@ impl HistoryView {
                 Cell::from(percent(mem)).style(Style::default().fg(efficiency_color(mem))),
                 Cell::from(percent(time)).style(Style::default().fg(efficiency_color(time))),
                 Cell::from(job.end_time.clone()),
-            ])
-            .height(1)
+            ];
+            cells.extend(
+                (0..self.extra_fields.len())
+                    .map(|i| Cell::from(job.extra.get(i).cloned().unwrap_or_default())),
+            );
+
+            Row::new(cells).height(1)
         });
 
-        let constraints = [
+        let mut constraints = vec![
             Constraint::Length(10), // ID
             Constraint::Min(10),    // Name
             Constraint::Length(13), // State, long enough for OUT_OF_MEMORY
@@ -279,6 +288,11 @@ impl HistoryView {
             Constraint::Length(6),  // walltime efficiency
             Constraint::Length(16), // end time
         ];
+        constraints.extend(
+            self.extra_fields
+                .iter()
+                .map(|f| Constraint::Length(f.width)),
+        );
 
         let table = Table::new(rows, constraints)
             .header(header)
@@ -574,6 +588,40 @@ mod tests {
             "alice", // detail line under the table
             "1 Jobs (last 7d)",
         ] {
+            assert!(
+                rendered.contains(expected),
+                "{expected:?} missing from:\n{rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn renders_extra_fields_as_columns() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut view = HistoryView::new();
+        view.extra_fields = ExtraField::parse_list("Comment%30");
+        view.update_jobs(vec![HistoryJob {
+            id: "777".to_string(),
+            name: "align".to_string(),
+            extra: vec!["sample A | lane 2".to_string()],
+            ..Default::default()
+        }]);
+
+        let mut terminal = Terminal::new(TestBackend::new(180, 14)).expect("test backend");
+        terminal
+            .draw(|frame| view.render(frame, frame.area()))
+            .expect("draw");
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        for expected in ["Comment", "sample A | lane 2", "align"] {
             assert!(
                 rendered.contains(expected),
                 "{expected:?} missing from:\n{rendered}"
