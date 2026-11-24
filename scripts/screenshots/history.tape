@@ -1,7 +1,7 @@
 # Records the job history screenshots in images/.
 #
 # Run scripts/screenshots/generate.sh rather than this tape directly: it
-# builds slurmer first and makes the margin around the window transparent.
+# builds slurmer first and adds the transparent margin and drop shadow.
 #
 # No Slurm cluster is needed: the scripts in scripts/screenshots/bin stand
 # in for squeue, sinfo, sacctmgr and sacct and print fixed demo jobs.
@@ -14,10 +14,11 @@ Require python3
 Set Shell "bash"
 Set Theme "rose-pine-dawn"
 Set FontSize 28
-Set Width 3200
-Set Height 2080
+Set Width 3024
+Set Height 1888
 Set Padding 20
-Set Margin 60
+# Only the rounded corners fall outside the window; generate.sh makes them
+# transparent
 Set MarginFill "#000000"
 Set WindowBar Colorful
 Set WindowBarSize 80
