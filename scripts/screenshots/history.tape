@@ -1,9 +1,7 @@
-# Regenerates the job history screenshots in images/.
+# Records the job history screenshots in images/.
 #
-# From the repository root:
-#
-#   cargo build --release
-#   vhs scripts/screenshots/history.tape
+# Run scripts/screenshots/generate.sh rather than this tape directly: it
+# builds slurmer first and makes the margin around the window transparent.
 #
 # No Slurm cluster is needed: the scripts in scripts/screenshots/bin stand
 # in for squeue, sinfo, sacctmgr and sacct and print fixed demo jobs.
